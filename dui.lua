@@ -20,8 +20,8 @@ Menu.BindingFeatureKeyName = nil
 Menu.SelectedKey = nil
 Menu.SelectedKeyName = nil
 Menu.SectionName = "Menu"
-Menu.Title = "phantom"
-Menu.FooterText = "phantom.lua"
+Menu.Title = "Emre.lua"
+Menu.FooterText = "Emre.lua"
 Menu.BrandAnimStart = nil
 Menu.Items = {}
 
