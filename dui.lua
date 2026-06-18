@@ -109,15 +109,24 @@ function Menu.DrawRect(x, y, w, h, r, g, b, a, rnd)
     Susano.DrawRectFilled(x, y, w, h, u(r), u(g), u(b), u(a or 255), rnd or 0)
 end
 
--- Gradient rect – colors in 0-255
+-- Gradient rect – colors in 0-255. Falls back to a solid rect if the
+-- gradient native is unavailable, so highlights/sliders always stay visible.
 function Menu.DrawGrad(x, y, w, h, r1,g1,b1,a1, r2,g2,b2,a2, r3,g3,b3,a3, r4,g4,b4,a4, rnd)
-    if not (Susano and Susano.DrawRectGradient) then return end
-    Susano.DrawRectGradient(x, y, w, h,
-        u(r1),u(g1),u(b1),u(a1 or 255),
-        u(r2),u(g2),u(b2),u(a2 or 255),
-        u(r3),u(g3),u(b3),u(a3 or 255),
-        u(r4),u(g4),u(b4),u(a4 or 255),
-        rnd or 0)
+    if Susano and Susano.DrawRectGradient then
+        Susano.DrawRectGradient(x, y, w, h,
+            u(r1),u(g1),u(b1),u(a1 or 255),
+            u(r2),u(g2),u(b2),u(a2 or 255),
+            u(r3),u(g3),u(b3),u(a3 or 255),
+            u(r4),u(g4),u(b4),u(a4 or 255),
+            rnd or 0)
+    else
+        -- average the 4 corners for a reasonable solid color
+        local ar = (r1 + r2 + r3 + r4) / 4
+        local ag = (g1 + g2 + g3 + g4) / 4
+        local ab = (b1 + b2 + b3 + b4) / 4
+        local aa = ((a1 or 255) + (a2 or 255) + (a3 or 255) + (a4 or 255)) / 4
+        Menu.DrawRect(x, y, w, h, ar, ag, ab, aa, rnd or 0)
+    end
 end
 
 -- Glowing rect: draws a semi-transparent blurred "halo" then the solid rect
@@ -217,13 +226,38 @@ function Menu.FindSelectablePosition(targetIndex)
     return 1
 end
 
+function Menu.FirstSelectableIndex()
+    local sel = Menu.GetSelectableItems()
+    return sel[1] and sel[1].index or 1
+end
+
 function Menu.FindNextSelectable(startIndex, direction)
     local sel = Menu.GetSelectableItems()
     if #sel == 0 then return 1 end
-    local cur = 1
+
+    -- locate the current position; if startIndex is a header/non-selectable,
+    -- snap to the nearest selectable so the first key press always moves.
+    local cur = nil
     for pos, entry in ipairs(sel) do
         if entry.index == startIndex then cur = pos; break end
     end
+
+    if not cur then
+        -- startIndex is not selectable: pick the closest selectable in the
+        -- requested direction without skipping an extra item.
+        if direction > 0 then
+            for pos, entry in ipairs(sel) do
+                if entry.index > startIndex then return entry.index end
+            end
+            return sel[1].index
+        else
+            for pos = #sel, 1, -1 do
+                if sel[pos].index < startIndex then return sel[pos].index end
+            end
+            return sel[#sel].index
+        end
+    end
+
     local nxt = cur + direction
     if nxt < 1 then nxt = #sel end
     if nxt > #sel then nxt = 1 end
@@ -963,14 +997,17 @@ function Menu.Render()
     Susano.BeginFrame()
 
     if Menu.Visible then
-        Menu.DrawBackground()
-        Menu.DrawHeader()
-        Menu.DrawSectionBar()
-        Menu.DrawItems()
-        Menu.DrawFooter()
+        -- guard drawing so a single bad native can never freeze input
+        pcall(function()
+            Menu.DrawBackground()
+            Menu.DrawHeader()
+            Menu.DrawSectionBar()
+            Menu.DrawItems()
+            Menu.DrawFooter()
+        end)
     end
 
-    Menu.DrawNotifications()
+    pcall(Menu.DrawNotifications)
 
     if Menu.OnRender then pcall(Menu.OnRender) end
 
@@ -1024,7 +1061,13 @@ function Menu.HandleInput()
 
     if Menu.IsKeyJustPressed(Menu.SelectedKey or 0x51) then
         Menu.Visible = not Menu.Visible
-        if not Menu.Visible and Susano and Susano.ResetFrame and not Menu.PreventResetFrame then
+        if Menu.Visible then
+            -- make sure we open on a real, selectable item (not a header)
+            if not Menu.IsSelectableItem(Menu.Items[Menu.CurrentItem]) then
+                Menu.CurrentItem = Menu.FirstSelectableIndex()
+            end
+            Menu.UpdateSectionName()
+        elseif Susano and Susano.ResetFrame and not Menu.PreventResetFrame then
             Susano.ResetFrame()
         end
     end
