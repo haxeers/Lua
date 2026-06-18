@@ -168,7 +168,7 @@ function Menu.LoadBannerTexture(url)
 end
 
 function Menu.SetBannerUrl(url)
-    if not url or url == "" or url == "https://hizliresim.com/t7rdy5t" then return end
+    if not url or url == "" or url == "https://hizliresim.com/2r70m1z" then return end
     Menu.Banner.imageUrl = url
     Menu.bannerTexture = nil
     Menu.bannerWidth = 0
