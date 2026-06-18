@@ -1,223 +1,306 @@
--- phantom.lua | susano menu
--- banner: https://i.hizliresim.com/gmgbp7w.png
-
 local Menu = {}
 
-Menu.Visible          = false
-Menu.CurrentItem      = 1
+Menu.Visible = false
+Menu.CurrentItem = 1
 Menu.ItemScrollOffset = 0
-Menu.ItemsPerPage     = 9
-Menu.SelectorY        = 0
-Menu.SmoothFactor     = 0.30
-Menu.Scale            = 1.0
-Menu.LoadingComplete  = true
-Menu.SelectedKey      = 0x2D   -- Insert
-Menu.SelectedKeyName  = "Insert"
-Menu.SectionName      = "Menu"
-Menu.Title            = "phantom"
-Menu.BrandAnimStart   = nil
-Menu.OpenAnimStart    = nil
-Menu.Items            = {}
+Menu.ItemsPerPage = 8
+Menu.SelectorY = 0
+Menu.SmoothFactor = 0.22
+Menu.Scale = 1.0
+Menu.LoadingComplete = false
+Menu.IsLoading = true
+Menu.LoadingProgress = 0.0
+Menu.LoadingStartTime = nil
+Menu.LoadingDuration = 5000
+Menu.SelectingKey = false
+Menu.SelectingFeatureBind = false
+Menu.BindingFeatureItem = nil
+Menu.BindingFeatureKey = nil
+Menu.BindingFeatureKeyName = nil
+Menu.SelectedKey = nil
+Menu.SelectedKeyName = nil
+Menu.SectionName = "Menu"
+Menu.Title = "phantom"
+Menu.FooterText = "phantom.lua"
+Menu.BrandAnimStart = nil
+Menu.Items = {}
 
--- Banner
 Menu.Banner = {
-    enabled  = true,
-    imageUrl = "https://i.hizliresim.com/gmgbp7w.png",
-    height   = 96,
+    enabled = true,
+    imageUrl = "https://i.hizliresim.com/t7rdy5t.png",
+    height = 100
 }
+
 Menu.bannerTexture = nil
-Menu.bannerWidth   = 0
-Menu.bannerHeight  = 0
+Menu.bannerWidth = 0
+Menu.bannerHeight = 0
+Menu.bannerLoadFailed = false
+Menu.bannerLoading = false
 
--- ─── Theme (all RGB 0-255) ───────────────────────────────────────────────────
--- Neon cyber theme (matches Emre.Lua banner): cyan + gold on deep navy
-local C = {
-    accent   = {  45, 226, 230 },  -- #2DE2E6 cyan/teal neon (primary)
-    accent2  = { 240, 184,  64 },  -- #F0B840 gold/amber (secondary)
-    panel    = {   8,  14,  26 },  -- deep navy base
-    panelTop = {  14,  23,  41 },  -- lighter navy
-    row      = {  11,  18,  33 },
-    rowAlt   = {  14,  24,  43 },
-    line     = {  30,  48,  76 },  -- navy-blue border
-    text     = { 226, 240, 248 },  -- cool white
-    textDim  = { 118, 150, 182 },  -- muted blue-gray
-    textOnAccent = {  4,  16,  24 },  -- dark text on cyan/gold
-    track    = {  26,  42,  64 },
-}
-Menu.C = C
-
--- ─── Layout ──────────────────────────────────────────────────────────────────
-Menu.Position = {
-    x             = 60,
-    y             = 110,
-    width         = 340,
-    itemHeight    = 32,
-    sectionHeight = 26,
-    headerHeight  = 96,
-    footerHeight  = 26,
-    radius        = 10,
-}
-
-function Menu.GetScaledPosition()
-    local s = Menu.Scale or 1.0
-    local p = Menu.Position
-    return {
-        x             = p.x,
-        y             = p.y,
-        width         = p.width         * s,
-        itemHeight    = p.itemHeight    * s,
-        sectionHeight = p.sectionHeight * s,
-        headerHeight  = p.headerHeight  * s,
-        footerHeight  = p.footerHeight  * s,
-        radius        = p.radius        * s,
-        bannerHeight  = (Menu.Banner.enabled and Menu.Banner.height or p.headerHeight) * s,
-    }
+function Menu.IsImageBytes(data)
+    if not data or #data < 4 then return false end
+    local b1, b2, b3, b4 = string.byte(data, 1, 4)
+    if b1 == 0x89 and b2 == 0x50 and b3 == 0x4E and b4 == 0x47 then return true end
+    if b1 == 0xFF and b2 == 0xD8 and b3 == 0xFF then return true end
+    if b1 == 0x42 and b2 == 0x4D then return true end
+    if b1 == 0x47 and b2 == 0x49 and b3 == 0x46 then return true end
+    return false
 end
 
--- ─── Texture loader ──────────────────────────────────────────────────────────
+function Menu.ExtractImageUrlFromHtml(html)
+    if not html or html == "" then return nil end
+    local patterns = {
+        'property=["\']og:image["\'][^>]-content=["\']([^"\']+)["\']',
+        'content=["\']([^"\']+)["\'][^>]-property=["\']og:image["\']',
+        '(https?://i%.hizliresim%.com/[%w%-%._]+)',
+        '(https?://i%.imgur%.com/[%w%-%._]+)',
+        '(https?://cdn%.discordapp%.com/attachments/[^"\']+)',
+        '(https?://media%.discordapp%.net/attachments/[^"\']+)',
+        '(https?://raw%.githubusercontent%.com/[^"\']+%.[pP][nN][gG])',
+        '(https?://raw%.githubusercontent%.com/[^"\']+%.[jJ][pP][eE]?[gG]?)',
+        'src=["\'](https?://[^"\']+%.[pP][nN][gG])["\']',
+        'src=["\'](https?://[^"\']+%.[jJ][pP][eE]?[gG]?)["\']',
+        'src=["\'](https?://[^"\']+%.[wW][eE][bB][pP])["\']'
+    }
+    for _, pattern in ipairs(patterns) do
+        local found = html:match(pattern)
+        if found and found ~= "" then return found end
+    end
+    return nil
+end
+
+function Menu.ResolveBannerCandidates(url)
+    local candidates = {}
+    local function add(u)
+        if u and u ~= "" then
+            for _, existing in ipairs(candidates) do
+                if existing == u then return end
+            end
+            table.insert(candidates, u)
+        end
+    end
+
+    add(url)
+
+    local lower = string.lower(url or "")
+    local hizId = url and url:match("hizliresim%.com/([%w%-_]+)")
+    if hizId then
+        hizId = hizId:gsub("%.png$", ""):gsub("%.jpg$", ""):gsub("%.jpeg$", "")
+        add("https://i.hizliresim.com/" .. hizId .. ".png")
+        add("https://i.hizliresim.com/" .. hizId .. ".jpg")
+    end
+
+    local imgurId = url and url:match("imgur%.com/([%w%d]+)")
+    if imgurId and not lower:find("i%.imgur%.com") then
+        add("https://i.imgur.com/" .. imgurId .. ".png")
+        add("https://i.imgur.com/" .. imgurId .. ".jpg")
+    end
+
+    if not lower:match("%.png") and not lower:match("%.jpe?g") and not lower:match("%.webp") and not lower:match("%.gif") and not lower:match("%.bmp") then
+        add(url .. ".png")
+        add(url .. ".jpg")
+    end
+
+    return candidates
+end
+
+function Menu.TryLoadBannerFromBytes(body)
+    if not body or #body == 0 then return false end
+    if not Menu.IsImageBytes(body) then return false end
+    if not Susano or not Susano.LoadTextureFromBuffer then return false end
+
+    local ok, textureId, width, height = pcall(function()
+        return Susano.LoadTextureFromBuffer(body)
+    end)
+
+    if ok and textureId and textureId ~= 0 then
+        Menu.bannerTexture = textureId
+        Menu.bannerWidth = width or 0
+        Menu.bannerHeight = height or 0
+        Menu.bannerLoadFailed = false
+        return true
+    end
+
+    return false
+end
+
 function Menu.LoadBannerTexture(url)
     if not url or url == "" then return end
-    if not (Susano and Susano.HttpGet and Susano.LoadTextureFromBuffer) then return end
+    if Menu.bannerLoading then return end
+    if not Susano or not Susano.HttpGet then return end
+
+    Menu.bannerLoading = true
+    Menu.bannerLoadFailed = false
+
     CreateThread(function()
-        pcall(function()
-            local status, body = Susano.HttpGet(url)
-            if status == 200 and body and #body > 0 then
-                local tid, w, h = Susano.LoadTextureFromBuffer(body)
-                if tid and tid ~= 0 then
-                    Menu.bannerTexture = tid
-                    Menu.bannerWidth   = w
-                    Menu.bannerHeight  = h
+        local loaded = false
+        local candidates = Menu.ResolveBannerCandidates(url)
+
+        for _, candidate in ipairs(candidates) do
+            if loaded then break end
+
+            local ok, status, body = pcall(function()
+                return Susano.HttpGet(candidate)
+            end)
+
+            if ok and status == 200 and body and #body > 0 then
+                if Menu.TryLoadBannerFromBytes(body) then
+                    loaded = true
+                    break
+                end
+
+                local extracted = Menu.ExtractImageUrlFromHtml(body)
+                if extracted and extracted ~= candidate then
+                    local ok2, status2, body2 = pcall(function()
+                        return Susano.HttpGet(extracted)
+                    end)
+                    if ok2 and status2 == 200 and body2 and Menu.TryLoadBannerFromBytes(body2) then
+                        loaded = true
+                        break
+                    end
                 end
             end
-        end)
+        end
+
+        Menu.bannerLoading = false
+        Menu.bannerLoadFailed = not loaded
     end)
 end
 
--- ─── Low-level draw helpers ───────────────────────────────────────────────────
-local function un(v) return (v and v > 1) and v / 255 or (v or 0) end
-
-function Menu.Rect(x, y, w, h, col, a, rnd)
-    if not (Susano and Susano.DrawRectFilled) then return end
-    a = a == nil and 255 or a
-    Susano.DrawRectFilled(x, y, w, h, un(col[1]), un(col[2]), un(col[3]), un(a), rnd or 0)
+function Menu.SetBannerUrl(url)
+    if not url or url == "" or url == "https://hizliresim.com/t7rdy5t" then return end
+    Menu.Banner.imageUrl = url
+    Menu.bannerTexture = nil
+    Menu.bannerWidth = 0
+    Menu.bannerHeight = 0
+    Menu.LoadBannerTexture(url)
 end
 
--- Vertical 2-color gradient (top -> bottom). Falls back to a solid blend.
-function Menu.VGrad(x, y, w, h, topCol, botCol, a, rnd)
-    a = a == nil and 255 or a
-    if Susano and Susano.DrawRectGradient then
-        Susano.DrawRectGradient(x, y, w, h,
-            un(topCol[1]), un(topCol[2]), un(topCol[3]), un(a),
-            un(topCol[1]), un(topCol[2]), un(topCol[3]), un(a),
-            un(botCol[1]), un(botCol[2]), un(botCol[3]), un(a),
-            un(botCol[1]), un(botCol[2]), un(botCol[3]), un(a),
-            rnd or 0)
-    else
-        Menu.Rect(x, y, w, h, {
-            (topCol[1] + botCol[1]) / 2,
-            (topCol[2] + botCol[2]) / 2,
-            (topCol[3] + botCol[3]) / 2,
-        }, a, rnd)
+function Menu.ColorToUnit(r, g, b, a)
+    a = a or 255
+    if r > 1 then r = r / 255 end
+    if g > 1 then g = g / 255 end
+    if b > 1 then b = b / 255 end
+    if a > 1 then a = a / 255 end
+    return r, g, b, a
+end
+
+Menu.Colors = {
+    Accent = { r = 255, g = 255, b = 255 },
+    SelectedBg = { r = 255, g = 255, b = 255 },
+    TextWhite = { r = 255, g = 255, b = 255 },
+    TextBlack = { r = 0, g = 0, b = 0 },
+    BackgroundDark = { r = 8, g = 8, b = 8 },
+    RowDark = { r = 14, g = 14, b = 14 },
+    FooterBlack = { r = 0, g = 0, b = 0 }
+}
+
+Menu.Position = {
+    x = 50,
+    y = 100,
+    width = 360,
+    itemHeight = 34,
+    sectionHeight = 26,
+    headerHeight = 100,
+    footerHeight = 26,
+    footerSpacing = 5,
+    sectionSpacing = 5,
+    footerRadius = 4,
+    itemRadius = 0,
+    headerRadius = 8
+}
+
+function Menu.GetScaledPosition()
+    local scale = Menu.Scale or 1.0
+    return {
+        x = Menu.Position.x,
+        y = Menu.Position.y,
+        width = Menu.Position.width * scale,
+        itemHeight = Menu.Position.itemHeight * scale,
+        sectionHeight = Menu.Position.sectionHeight * scale,
+        headerHeight = Menu.Position.headerHeight * scale,
+        footerHeight = Menu.Position.footerHeight * scale,
+        footerSpacing = Menu.Position.footerSpacing * scale,
+        sectionSpacing = Menu.Position.sectionSpacing * scale,
+        footerRadius = Menu.Position.footerRadius * scale,
+        itemRadius = Menu.Position.itemRadius * scale,
+        headerRadius = Menu.Position.headerRadius * scale
+    }
+end
+
+function Menu.DrawRect(x, y, width, height, r, g, b, a, rounding)
+    r, g, b, a = Menu.ColorToUnit(r, g, b, a or 255)
+    if Susano and Susano.DrawRectFilled then
+        Susano.DrawRectFilled(x, y, width, height, r, g, b, a, rounding or 0)
     end
 end
 
-function Menu.Text(x, y, text, size, col, a)
-    if not (Susano and Susano.DrawText) then return end
-    local s = Menu.Scale or 1.0
-    a = a == nil and 255 or a
-    Susano.DrawText(x, y, text, (size or 14) * s, un(col[1]), un(col[2]), un(col[3]), un(a))
+function Menu.DrawText(x, y, text, size_px, r, g, b, a)
+    local scale = Menu.Scale or 1.0
+    size_px = (size_px or 16) * scale
+    r, g, b, a = Menu.ColorToUnit(r or 255, g or 255, b or 255, a or 255)
+    if Susano and Susano.DrawText then
+        Susano.DrawText(x, y, text, size_px, r, g, b, a)
+    end
 end
 
-function Menu.TextW(text, size)
-    local s = Menu.Scale or 1.0
+function Menu.GetTextWidth(text, size_px)
+    local scale = Menu.Scale or 1.0
+    size_px = (size_px or 16) * scale
     if Susano and Susano.GetTextWidth then
-        return Susano.GetTextWidth(text, (size or 14) * s)
+        return Susano.GetTextWidth(text, size_px)
     end
-    return string.len(text or "") * 7 * s
+    return string.len(text or "") * 8 * scale
 end
 
--- ─── Animation ────────────────────────────────────────────────────────────────
-local function clamp(v, lo, hi) return math.max(lo, math.min(hi, v)) end
-
-function Menu.Pulse(speed, lo, hi)
-    local v = 0.5 + 0.5 * math.sin((GetGameTimer() / 1000.0) * (speed or 2) * math.pi)
-    return (lo or 0) + v * ((hi or 1) - (lo or 0))
-end
-
-function Menu.UpdateAnims()
-    if Menu.Visible then
-        if not Menu.BrandAnimStart then Menu.BrandAnimStart = GetGameTimer() end
-        if not Menu.OpenAnimStart  then Menu.OpenAnimStart  = GetGameTimer() end
-    else
-        Menu.BrandAnimStart = nil
-        Menu.OpenAnimStart  = nil
-    end
-end
-
-function Menu.OpenProgress()
-    if not Menu.OpenAnimStart then return 1 end
-    local e = GetGameTimer() - Menu.OpenAnimStart
-    local t = clamp(e / 180, 0, 1)
-    return 1 - (1 - t) * (1 - t)   -- ease-out
-end
-
-function Menu.GetBrandAnim()
-    local start   = Menu.BrandAnimStart or GetGameTimer()
-    local e = GetGameTimer() - start
-    if e < 350  then return "o",       clamp(e / 250, 0, 1) end
-    if e < 750  then return "o",       1 end
-    if e < 1050 then return "o",       1 - ((e - 750) / 300) end
-    if e < 1550 then return "phantom", (e - 1050) / 500 end
-    return "phantom", 1
-end
-
--- ─── Item helpers ─────────────────────────────────────────────────────────────
 function Menu.IsSelectableItem(item)
-    return item and not (item.isHeader or item.isSeparator)
+    if not item then return false end
+    if item.isHeader or item.isSeparator then return false end
+    return true
 end
 
 function Menu.GetSelectableItems()
     local list = {}
     for i, item in ipairs(Menu.Items or {}) do
         if Menu.IsSelectableItem(item) then
-            list[#list + 1] = { index = i, item = item }
+            table.insert(list, { index = i, item = item })
         end
     end
     return list
 end
 
-function Menu.FirstSelectableIndex()
-    local sel = Menu.GetSelectableItems()
-    return sel[1] and sel[1].index or 1
-end
-
-function Menu.FindSelectablePosition(target)
-    for pos, e in ipairs(Menu.GetSelectableItems()) do
-        if e.index == target then return pos end
+function Menu.FindSelectablePosition(targetIndex)
+    local selectable = Menu.GetSelectableItems()
+    for pos, entry in ipairs(selectable) do
+        if entry.index == targetIndex then
+            return pos
+        end
     end
     return 1
 end
 
-function Menu.FindNextSelectable(startIndex, dir)
-    local sel = Menu.GetSelectableItems()
-    if #sel == 0 then return 1 end
-    local cur = nil
-    for pos, e in ipairs(sel) do
-        if e.index == startIndex then cur = pos break end
-    end
-    if not cur then
-        if dir > 0 then
-            for _, e in ipairs(sel) do if e.index > startIndex then return e.index end end
-            return sel[1].index
-        else
-            for pos = #sel, 1, -1 do if sel[pos].index < startIndex then return sel[pos].index end end
-            return sel[#sel].index
+function Menu.GetSelectableIndex(position)
+    local selectable = Menu.GetSelectableItems()
+    local entry = selectable[position]
+    return entry and entry.index or 1
+end
+
+function Menu.FindNextSelectable(startIndex, direction)
+    local selectable = Menu.GetSelectableItems()
+    if #selectable == 0 then return 1 end
+
+    local currentPos = 1
+    for pos, entry in ipairs(selectable) do
+        if entry.index == startIndex then
+            currentPos = pos
+            break
         end
     end
-    local nxt = cur + dir
-    if nxt < 1 then nxt = #sel end
-    if nxt > #sel then nxt = 1 end
-    return sel[nxt].index
+
+    local nextPos = currentPos + direction
+    if nextPos < 1 then nextPos = #selectable end
+    if nextPos > #selectable then nextPos = 1 end
+    return selectable[nextPos].index
 end
 
 function Menu.UpdateSectionName()
@@ -231,6 +314,450 @@ function Menu.UpdateSectionName()
     Menu.SectionName = section
 end
 
+function Menu.UpdateBrandAnim()
+    if Menu.Visible then
+        if not Menu.BrandAnimStart then
+            Menu.BrandAnimStart = GetGameTimer()
+        end
+    else
+        Menu.BrandAnimStart = nil
+    end
+end
+
+function Menu.GetBrandAnim()
+    local start = Menu.BrandAnimStart or GetGameTimer()
+    local elapsed = GetGameTimer() - start
+
+    if elapsed < 350 then
+        return "o", math.min(1, elapsed / 250)
+    elseif elapsed < 750 then
+        return "o", 1
+    elseif elapsed < 1050 then
+        return "o", 1 - ((elapsed - 750) / 300)
+    elseif elapsed < 1550 then
+        return "phantom", (elapsed - 1050) / 500
+    end
+
+    return "phantom", 1
+end
+
+function Menu.DrawShadowText(x, y, text, size_px, r, g, b, a)
+    Menu.DrawText(x + 1, y + 1, text, size_px, 0, 0, 0, a or 200)
+    Menu.DrawText(x, y, text, size_px, r, g, b, a or 255)
+end
+
+function Menu.UpdateLoading()
+    if not Menu.IsLoading then return end
+    if not Menu.LoadingStartTime then
+        Menu.LoadingStartTime = GetGameTimer()
+    end
+
+    local elapsed = GetGameTimer() - Menu.LoadingStartTime
+    Menu.LoadingProgress = math.min(100, (elapsed / Menu.LoadingDuration) * 100)
+
+    if Menu.LoadingProgress >= 100 then
+        Menu.IsLoading = false
+        Menu.SelectingKey = true
+    end
+end
+
+function Menu.DrawLoadingScreen()
+    local sw = (Susano and Susano.GetScreenWidth and Susano.GetScreenWidth()) or 1920
+    local sh = (Susano and Susano.GetScreenHeight and Susano.GetScreenHeight()) or 1080
+    local centerX = sw / 2
+    local centerY = sh / 2
+
+    local title = "phantom"
+    local titleSize = 42
+    local titleWidth = Menu.GetTextWidth(title, titleSize)
+    Menu.DrawShadowText(centerX - (titleWidth / 2), centerY - 80, title, titleSize, 255, 255, 255, 255)
+
+    local barW, barH = 420, 14
+    local barX = centerX - (barW / 2)
+    local barY = centerY - 10
+    local percent = (Menu.LoadingProgress or 0) / 100
+
+    Menu.DrawRect(barX - 1, barY - 1, barW + 2, barH + 2, 0, 0, 0, 255, 4)
+    Menu.DrawRect(barX, barY, barW, barH, 25, 25, 25, 220, 3)
+    if percent > 0 then
+        Menu.DrawRect(barX, barY, barW * percent, barH, 255, 255, 255, 255, 3)
+    end
+
+    local statusText = string.format("Loading... %d%%", math.floor(Menu.LoadingProgress or 0))
+    local statusSize = 18
+    local statusWidth = Menu.GetTextWidth(statusText, statusSize)
+    Menu.DrawShadowText(centerX - (statusWidth / 2), barY + 28, statusText, statusSize, 255, 255, 255, 255)
+end
+
+Menu.KeyNames = {
+    [0x08] = "Backspace", [0x09] = "Tab", [0x0D] = "Enter", [0x10] = "Shift",
+    [0x11] = "Ctrl", [0x12] = "Alt", [0x1B] = "ESC", [0x20] = "Space",
+    [0x25] = "Left", [0x26] = "Up", [0x27] = "Right", [0x28] = "Down",
+    [0x30] = "0", [0x31] = "1", [0x32] = "2", [0x33] = "3", [0x34] = "4",
+    [0x35] = "5", [0x36] = "6", [0x37] = "7", [0x38] = "8", [0x39] = "9",
+    [0x41] = "A", [0x42] = "B", [0x43] = "C", [0x44] = "D", [0x45] = "E",
+    [0x46] = "F", [0x47] = "G", [0x48] = "H", [0x49] = "I", [0x4A] = "J",
+    [0x4B] = "K", [0x4C] = "L", [0x4D] = "M", [0x4E] = "N", [0x4F] = "O",
+    [0x50] = "P", [0x51] = "Q", [0x52] = "R", [0x53] = "S", [0x54] = "T",
+    [0x55] = "U", [0x56] = "V", [0x57] = "W", [0x58] = "X", [0x59] = "Y",
+    [0x5A] = "Z",
+    [0x70] = "F1", [0x71] = "F2", [0x72] = "F3", [0x73] = "F4",
+    [0x74] = "F5", [0x75] = "F6", [0x76] = "F7", [0x77] = "F8",
+    [0x78] = "F9", [0x79] = "F10", [0x7A] = "F11", [0x7B] = "F12"
+}
+
+function Menu.GetKeyName(keyCode)
+    return Menu.KeyNames[keyCode] or ("0x" .. string.format("%02X", keyCode))
+end
+
+function Menu.DrawKeySelector()
+    local sw = (Susano and Susano.GetScreenWidth and Susano.GetScreenWidth()) or 1920
+    local sh = (Susano and Susano.GetScreenHeight and Susano.GetScreenHeight()) or 1080
+
+    local panelW, panelH = 460, 110
+    local panelX = (sw / 2) - (panelW / 2)
+    local panelY = sh - panelH - 40
+
+    Menu.DrawRect(panelX, panelY, panelW, panelH, 0, 0, 0, 230, 8)
+    Menu.DrawRect(panelX, panelY, panelW, 2, 255, 255, 255, 255, 0)
+
+    local title = "phantom"
+    local titleSize = 22
+    local titleW = Menu.GetTextWidth(title, titleSize)
+    Menu.DrawShadowText(panelX + (panelW / 2) - (titleW / 2), panelY + 14, title, titleSize, 255, 255, 255, 255)
+
+    local hint = "Select menu toggle key - press ENTER to confirm"
+    local hintSize = 14
+    local hintW = Menu.GetTextWidth(hint, hintSize)
+    Menu.DrawText(panelX + (panelW / 2) - (hintW / 2), panelY + 48, hint, hintSize, 200, 200, 200, 255)
+
+    local keyName = Menu.SelectedKeyName or "..."
+    local keyBoxW, keyBoxH = 56, 34
+    local keyBoxX = panelX + (panelW / 2) - (keyBoxW / 2)
+    local keyBoxY = panelY + panelH - keyBoxH - 14
+    Menu.DrawRect(keyBoxX, keyBoxY, keyBoxW, keyBoxH, 30, 30, 30, 255, 6)
+    Menu.DrawRect(keyBoxX, keyBoxY, keyBoxW, 1, 255, 255, 255, 180, 0)
+
+    local keySize = 18
+    local keyW = Menu.GetTextWidth(keyName, keySize)
+    Menu.DrawText(keyBoxX + (keyBoxW / 2) - (keyW / 2), keyBoxY + 7, keyName, keySize, 255, 255, 255, 255)
+end
+
+function Menu.HandleKeySelection()
+    if not (Susano and Susano.GetAsyncKeyState) then return end
+
+    if Menu.IsKeyJustPressed(0x0D) then
+        if Menu.SelectedKey then
+            Menu.SelectingKey = false
+            Menu.LoadingComplete = true
+            if Menu.Notify then
+                Menu.Notify("success", "Menu keybind: " .. (Menu.SelectedKeyName or "?"))
+            end
+        end
+        return
+    end
+
+    local keysToCheck = {
+        0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A, 0x4B, 0x4C, 0x4D,
+        0x4E, 0x4F, 0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5A,
+        0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39,
+        0x20, 0x1B, 0x08, 0x09, 0x10, 0x11, 0x12,
+        0x25, 0x26, 0x27, 0x28,
+        0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7A, 0x7B
+    }
+
+    for _, keyCode in ipairs(keysToCheck) do
+        if keyCode ~= 0x0D and Menu.IsKeyJustPressed(keyCode) then
+            Menu.SelectedKey = keyCode
+            Menu.SelectedKeyName = Menu.GetKeyName(keyCode)
+            break
+        end
+    end
+end
+
+function Menu.DrawFeatureKeySelector()
+    local sw = (Susano and Susano.GetScreenWidth and Susano.GetScreenWidth()) or 1920
+    local sh = (Susano and Susano.GetScreenHeight and Susano.GetScreenHeight()) or 1080
+
+    local panelW, panelH = 480, 110
+    local panelX = (sw / 2) - (panelW / 2)
+    local panelY = sh - panelH - 40
+
+    Menu.DrawRect(panelX, panelY, panelW, panelH, 0, 0, 0, 230, 8)
+    Menu.DrawRect(panelX, panelY, panelW, 2, 255, 255, 255, 255, 0)
+
+    local itemName = (Menu.BindingFeatureItem and Menu.BindingFeatureItem.name) or "Feature"
+    local title = "Keybind: " .. itemName
+    local titleSize = 18
+    local titleW = Menu.GetTextWidth(title, titleSize)
+    Menu.DrawShadowText(panelX + (panelW / 2) - (titleW / 2), panelY + 12, title, titleSize, 255, 255, 255, 255)
+
+    local hint = "Press a key - ENTER to confirm (F9 to cancel)"
+    local hintSize = 13
+    local hintW = Menu.GetTextWidth(hint, hintSize)
+    Menu.DrawText(panelX + (panelW / 2) - (hintW / 2), panelY + 42, hint, hintSize, 200, 200, 200, 255)
+
+    local keyName = Menu.BindingFeatureKeyName or "..."
+    local keyBoxW, keyBoxH = 56, 34
+    local keyBoxX = panelX + (panelW / 2) - (keyBoxW / 2)
+    local keyBoxY = panelY + panelH - keyBoxH - 12
+    Menu.DrawRect(keyBoxX, keyBoxY, keyBoxW, keyBoxH, 30, 30, 30, 255, 6)
+    local keyW = Menu.GetTextWidth(keyName, 18)
+    Menu.DrawText(keyBoxX + (keyBoxW / 2) - (keyW / 2), keyBoxY + 7, keyName, 18, 255, 255, 255, 255)
+end
+
+function Menu.HandleFeatureKeySelection()
+    if not (Susano and Susano.GetAsyncKeyState) then return end
+
+    if Menu.IsKeyJustPressed(0x78) then
+        Menu.SelectingFeatureBind = false
+        Menu.BindingFeatureItem = nil
+        Menu.BindingFeatureKey = nil
+        Menu.BindingFeatureKeyName = nil
+        return
+    end
+
+    if Menu.IsKeyJustPressed(0x0D) then
+        if Menu.BindingFeatureKey and Menu.BindingFeatureItem then
+            Menu.BindingFeatureItem.bindKey = Menu.BindingFeatureKey
+            Menu.BindingFeatureItem.bindKeyName = Menu.BindingFeatureKeyName
+            if Menu.Notify then
+                Menu.Notify("success", Menu.BindingFeatureItem.name .. " bound to " .. Menu.BindingFeatureKeyName)
+            end
+        end
+        Menu.SelectingFeatureBind = false
+        Menu.BindingFeatureItem = nil
+        Menu.BindingFeatureKey = nil
+        Menu.BindingFeatureKeyName = nil
+        return
+    end
+
+    local keysToCheck = {
+        0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A, 0x4B, 0x4C, 0x4D,
+        0x4E, 0x4F, 0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5A,
+        0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39,
+        0x20, 0x1B, 0x08, 0x09, 0x10, 0x11, 0x12,
+        0x25, 0x26, 0x27, 0x28,
+        0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77, 0x79, 0x7A, 0x7B
+    }
+
+    for _, keyCode in ipairs(keysToCheck) do
+        if Menu.IsKeyJustPressed(keyCode) then
+            Menu.BindingFeatureKey = keyCode
+            Menu.BindingFeatureKeyName = Menu.GetKeyName(keyCode)
+            break
+        end
+    end
+end
+
+function Menu.HandleFeatureKeybinds()
+    if Menu.IsLoading or Menu.SelectingKey or Menu.SelectingFeatureBind or Menu.Visible then return end
+    if not Menu.LoadingComplete then return end
+
+    for _, item in ipairs(Menu.Items or {}) do
+        if item.bindKey and (item.type == "toggle" or item.type == "action") then
+            if Menu.IsKeyJustPressed(item.bindKey) then
+                if item.type == "toggle" then
+                    item.value = not item.value
+                    if Menu.Notify then
+                        Menu.Notify(item.value and "success" or "info", item.name .. ": " .. (item.value and "Enabled" or "Disabled"))
+                    end
+                    if item.onClick then item.onClick(item.value) end
+                elseif item.type == "action" then
+                    if item.onClick then item.onClick() end
+                    if Menu.Notify then Menu.Notify("info", item.name .. " activated") end
+                end
+            end
+        end
+    end
+end
+
+function Menu.DrawBrandText(centerX, centerY, size_px, suffix)
+    local text, alpha = Menu.GetBrandAnim()
+    if alpha <= 0 then return end
+
+    suffix = suffix or ""
+    local display = text .. (alpha >= 1 and suffix or "")
+    local alpha255 = math.floor(alpha * 255)
+    local textWidth = Menu.GetTextWidth(display, size_px)
+    local drawX = centerX - (textWidth / 2)
+    local drawY = centerY - (size_px / 2)
+
+    Menu.DrawText(drawX, drawY, display, size_px, 255, 255, 255, alpha255)
+end
+
+function Menu.DrawHeader()
+    local pos = Menu.GetScaledPosition()
+    local scale = Menu.Scale or 1.0
+    local x, y = pos.x, pos.y
+    local width = pos.width - 1
+    local bannerHeight = Menu.Banner.enabled and (Menu.Banner.height * scale) or pos.headerHeight
+    local hasBannerImage = Menu.Banner.enabled and Menu.bannerTexture and Menu.bannerTexture > 0 and Susano and Susano.DrawImage
+
+    if hasBannerImage then
+        Susano.DrawImage(Menu.bannerTexture, x, y, width, bannerHeight, 1, 1, 1, 1, pos.headerRadius)
+    else
+        Menu.DrawRect(x, y, width, bannerHeight, 0, 0, 0, 255, pos.headerRadius)
+        local titleSize = 34 * scale
+        Menu.DrawBrandText(x + (width / 2), y + (bannerHeight / 2), titleSize, "")
+    end
+end
+
+function Menu.DrawSectionBar()
+    local pos = Menu.GetScaledPosition()
+    local scale = Menu.Scale or 1.0
+    local x = pos.x
+    local bannerHeight = Menu.Banner.enabled and (Menu.Banner.height * scale) or pos.headerHeight
+    local y = pos.y + bannerHeight
+    local width = pos.width - 1
+    local height = pos.sectionHeight
+
+    Menu.DrawRect(x, y, width, height, Menu.Colors.RowDark.r, Menu.Colors.RowDark.g, Menu.Colors.RowDark.b, 255, 0)
+
+    local text = Menu.SectionName or "Menu"
+    local textSize = 16
+    local textY = y + (height / 2) - ((textSize * scale) / 2) + 1
+    Menu.DrawText(x + 14 * scale, textY, text, textSize, 255, 255, 255, 255)
+end
+
+function Menu.DrawToggle(x, itemY, width, itemHeight, item, isSelected)
+    local scale = Menu.Scale or 1.0
+    local toggleWidth = 36 * scale
+    local toggleHeight = 16 * scale
+    local toggleX = x + width - toggleWidth - (16 * scale)
+    local toggleY = itemY + (itemHeight / 2) - (toggleHeight / 2)
+    local toggleRadius = toggleHeight / 2
+
+    if item.value then
+        Menu.DrawRect(toggleX, toggleY, toggleWidth, toggleHeight, 255, 255, 255, 242, toggleRadius)
+    else
+        Menu.DrawRect(toggleX, toggleY, toggleWidth, toggleHeight, 40, 40, 40, 242, toggleRadius)
+    end
+
+    local circleSize = toggleHeight - 4
+    local circleY = toggleY + 2
+    local circleX = item.value and (toggleX + toggleWidth - circleSize - 2) or (toggleX + 2)
+    local knobR, knobG, knobB = item.value and 0 or 255, item.value and 0 or 255, item.value and 0 or 255
+    if isSelected and not item.value then
+        knobR, knobG, knobB = 0, 0, 0
+    end
+    Menu.DrawRect(circleX, circleY, circleSize, circleSize, knobR, knobG, knobB, 255, circleSize / 2)
+
+    if item.hasSlider then
+        local sliderWidth = 85 * scale
+        local sliderHeight = 6 * scale
+        local sliderX = x + width - sliderWidth - (95 * scale)
+        local sliderY = itemY + (itemHeight / 2) - (sliderHeight / 2)
+        local minValue = item.sliderMin or 0
+        local maxValue = item.sliderMax or 100
+        local currentValue = item.sliderValue or minValue
+        local percent = (currentValue - minValue) / math.max(0.0001, (maxValue - minValue))
+        percent = math.max(0, math.min(1, percent))
+        local trackR, trackG, trackB = isSelected and 180 or 40, isSelected and 180 or 40, isSelected and 180 or 40
+        local fillR, fillG, fillB = isSelected and 0 or 255, isSelected and 0 or 255, isSelected and 0 or 255
+        local valR, valG, valB = isSelected and 0 or 255, isSelected and 0 or 255, isSelected and 0 or 255
+
+        Menu.DrawRect(sliderX, sliderY, sliderWidth, sliderHeight, trackR, trackG, trackB, 180, 3)
+        if percent > 0 then
+            Menu.DrawRect(sliderX, sliderY, sliderWidth * percent, sliderHeight, fillR, fillG, fillB, 255, 3)
+        end
+
+        local valueText
+        if item.sliderStep and item.sliderStep >= 1 then
+            valueText = string.format("%.0f", currentValue)
+        else
+            valueText = string.format("%.1f", currentValue)
+        end
+        Menu.DrawText(sliderX + sliderWidth + (8 * scale), sliderY - 2, valueText, 11, valR, valG, valB, 210)
+    end
+end
+
+function Menu.DrawSlider(x, itemY, width, itemHeight, item, isSelected)
+    local scale = Menu.Scale or 1.0
+    local sliderWidth = 100 * scale
+    local sliderHeight = 7 * scale
+    local sliderX = x + width - sliderWidth - (60 * scale)
+    local sliderY = itemY + (itemHeight / 2) - (sliderHeight / 2)
+    local minValue = item.min or 0
+    local maxValue = item.max or 100
+    local currentValue = item.value or minValue
+    local percent = (currentValue - minValue) / math.max(0.0001, (maxValue - minValue))
+    percent = math.max(0, math.min(1, percent))
+    local trackR, trackG, trackB = isSelected and 180 or 40, isSelected and 180 or 40, isSelected and 180 or 40
+    local fillR, fillG, fillB = isSelected and 0 or 255, isSelected and 0 or 255, isSelected and 0 or 255
+    local valR, valG, valB = isSelected and 0 or 255, isSelected and 0 or 255, isSelected and 0 or 255
+
+    Menu.DrawRect(sliderX, sliderY, sliderWidth, sliderHeight, trackR, trackG, trackB, 180, 3)
+    if percent > 0 then
+        Menu.DrawRect(sliderX, sliderY, sliderWidth * percent, sliderHeight, fillR, fillG, fillB, 255, 3)
+    end
+
+    local valueText = (item.step and item.step >= 1) and string.format("%.0f", currentValue) or string.format("%.1f", currentValue)
+    Menu.DrawText(sliderX + sliderWidth + (8 * scale), sliderY - 2, valueText, 11, valR, valG, valB, 210)
+end
+
+function Menu.DrawItem(x, itemY, width, itemHeight, item, isSelected)
+    local scale = Menu.Scale or 1.0
+
+    if item.isHeader then
+        return
+    end
+
+    if item.isSeparator then
+        Menu.DrawRect(x, itemY, width, itemHeight, Menu.Colors.BackgroundDark.r, Menu.Colors.BackgroundDark.g, Menu.Colors.BackgroundDark.b, 50, 0)
+        if item.separatorText then
+            local textWidth = Menu.GetTextWidth(item.separatorText, 14)
+            local textX = x + (width / 2) - (textWidth / 2)
+            local textY = itemY + (itemHeight / 2) - (7 * scale)
+            Menu.DrawText(textX, textY, item.separatorText, 14, 255, 255, 255, 255)
+        end
+        return
+    end
+
+    Menu.DrawRect(x, itemY, width, itemHeight, Menu.Colors.RowDark.r, Menu.Colors.RowDark.g, Menu.Colors.RowDark.b, 255, 0)
+
+    if isSelected then
+        if Menu.SelectorY == 0 then Menu.SelectorY = itemY end
+        Menu.SelectorY = Menu.SelectorY + (itemY - Menu.SelectorY) * Menu.SmoothFactor
+        if math.abs(Menu.SelectorY - itemY) < 0.5 then Menu.SelectorY = itemY end
+        Menu.DrawRect(x, Menu.SelectorY, width, itemHeight,
+            Menu.Colors.SelectedBg.r, Menu.Colors.SelectedBg.g, Menu.Colors.SelectedBg.b, 255, 0)
+    end
+
+    local textR, textG, textB = 255, 255, 255
+    if isSelected then
+        textR, textG, textB = 0, 0, 0
+    end
+
+    local textX = x + (16 * scale)
+    local textY = itemY + (itemHeight / 2) - (8 * scale)
+    local label = item.name or ""
+    if item.bindKeyName then
+        label = label .. " [" .. item.bindKeyName .. "]"
+    end
+    Menu.DrawText(textX, textY, label, 17, textR, textG, textB, 255)
+
+    if item.type == "toggle" then
+        Menu.DrawToggle(x, itemY, width, itemHeight, item, isSelected)
+    elseif item.type == "slider" then
+        Menu.DrawSlider(x, itemY, width, itemHeight, item, isSelected)
+    elseif item.type == "action" then
+        local hint = ">"
+        local hintWidth = Menu.GetTextWidth(hint, 16)
+        Menu.DrawText(x + width - hintWidth - (16 * scale), textY, hint, 16, textR, textG, textB, 180)
+    end
+end
+
+function Menu.GetVisibleItemCount()
+    local count = 0
+    for _, item in ipairs(Menu.Items or {}) do
+        if not item.isHeader then
+            count = count + 1
+        end
+    end
+    return math.min(Menu.ItemsPerPage, math.max(count, 1))
+end
+
 function Menu.GetContentHeight()
     local pos = Menu.GetScaledPosition()
     local visible = 0
@@ -240,466 +767,221 @@ function Menu.GetContentHeight()
             if visible >= Menu.ItemsPerPage then break end
         end
     end
-    return math.max(visible, 1) * pos.itemHeight
-end
-
-function Menu.TotalHeight()
-    local pos = Menu.GetScaledPosition()
-    return pos.bannerHeight + pos.sectionHeight + Menu.GetContentHeight() + pos.footerHeight
-end
-
--- ─── DRAW: panel / shadow ─────────────────────────────────────────────────────
-function Menu.DrawPanel()
-    local pos = Menu.GetScaledPosition()
-    local w   = pos.width
-    local total = Menu.TotalHeight()
-
-    -- soft drop shadow
-    if Susano and Susano.DrawShadowRect then
-        Susano.DrawShadowRect(pos.x, pos.y, w, total, un(C.panel[1]), un(C.panel[2]), un(C.panel[3]), 0.98, pos.radius)
-    else
-        for i = 1, 4 do
-            local p = i * 2
-            Menu.Rect(pos.x - p, pos.y - p, w + p * 2, total + p * 2, {0, 0, 0}, 22 / i, pos.radius + p)
-        end
-    end
-
-    -- panel body
-    Menu.Rect(pos.x, pos.y, w, total, C.panel, 250, pos.radius)
-end
-
--- ─── DRAW: header / banner ────────────────────────────────────────────────────
-function Menu.DrawHeader()
-    local pos  = Menu.GetScaledPosition()
-    local s    = Menu.Scale or 1.0
-    local x, y = pos.x, pos.y
-    local w    = pos.width
-    local bh   = pos.bannerHeight
-    local rnd  = pos.radius
-
-    if Menu.Banner.enabled and Menu.bannerTexture and Menu.bannerTexture > 0 and Susano and Susano.DrawImage then
-        Susano.DrawImage(Menu.bannerTexture, x, y, w, bh, 1, 1, 1, 1, rnd)
-    else
-        Menu.VGrad(x, y, w, bh, C.accent, C.panelTop, 255, rnd)
-    end
-
-    -- bottom fade so the banner blends into the panel (no hard edge)
-    local fadeH = bh * 0.55
-    local fy    = y + bh - fadeH
-    if Susano and Susano.DrawRectGradient then
-        -- smooth transparent -> panel vertical fade (no banding)
-        Susano.DrawRectGradient(x, fy, w, fadeH,
-            un(C.panel[1]), un(C.panel[2]), un(C.panel[3]), 0.0,
-            un(C.panel[1]), un(C.panel[2]), un(C.panel[3]), 0.0,
-            un(C.panel[1]), un(C.panel[2]), un(C.panel[3]), 0.95,
-            un(C.panel[1]), un(C.panel[2]), un(C.panel[3]), 0.95,
-            0)
-    else
-        Menu.Rect(x, y + bh - fadeH * 0.5, w, fadeH * 0.5, C.panel, 200, 0)
-    end
-
-    -- thin neon baseline: cyan -> gold horizontal gradient (with fallback)
-    local pulse = Menu.Pulse(0.8, 150, 235) / 255
-    local ly = y + bh - 2 * s
-    if Susano and Susano.DrawRectGradient then
-        Susano.DrawRectGradient(x, ly, w, 2 * s,
-            un(C.accent[1]),  un(C.accent[2]),  un(C.accent[3]),  pulse,
-            un(C.accent2[1]), un(C.accent2[2]), un(C.accent2[3]), pulse,
-            un(C.accent2[1]), un(C.accent2[2]), un(C.accent2[3]), pulse,
-            un(C.accent[1]),  un(C.accent[2]),  un(C.accent[3]),  pulse,
-            0)
-    else
-        Menu.Rect(x, ly, w, 2 * s, C.accent, pulse * 255, 0)
-    end
-
-    -- brand bottom-left (classic cheat layout)
-    local text, alpha = Menu.GetBrandAnim()
-    if alpha > 0 then
-        local size = 22
-        local a    = math.floor(alpha * 255)
-        local tx   = x + 16 * s
-        local ty   = y + bh - (size * s) - 12 * s
-        Menu.Text(tx + 1, ty + 1, text, size, {0, 0, 0}, math.floor(a * 0.6))
-        Menu.Text(tx, ty, text, size, C.text, a)
-        if alpha >= 1 then
-            local bw = Menu.TextW(text, size)
-            Menu.Text(tx + bw + 4 * s, ty + 4 * s, ".lua", 12, C.accent2, 235)
-        end
-    end
-end
-
--- ─── DRAW: section bar ────────────────────────────────────────────────────────
-function Menu.DrawSectionBar()
-    local pos = Menu.GetScaledPosition()
-    local s   = Menu.Scale or 1.0
-    local x   = pos.x
-    local y   = pos.y + pos.bannerHeight
-    local w   = pos.width
-    local h   = pos.sectionHeight
-
-    Menu.Rect(x, y, w, h, C.panelTop, 255, 0)
-    Menu.Rect(x, y + h - 1, w, 1, C.line, 255, 0)
-
-    local label = string.upper(Menu.SectionName or "MENU")
-    local size  = 11
-    local ty    = y + h / 2 - (size * s) / 2
-    Menu.Text(x + 16 * s, ty, label, size, C.textDim, 255)
-
-    -- accent tick on the right (gold)
-    local tickW = 22 * s
-    Menu.Rect(x + w - tickW - 16 * s, y + h / 2 - 1, tickW, 2, C.accent2, 255, 0)
-end
-
--- ─── Widgets ──────────────────────────────────────────────────────────────────
-function Menu.DrawToggle(x, itemY, w, ih, item, isSel)
-    local s  = Menu.Scale or 1.0
-    local tW = 32 * s
-    local tH = 16 * s
-    local tX = x + w - tW - 16 * s
-    local tY = itemY + ih / 2 - tH / 2
-    local r  = tH / 2
-
-    if item.value then
-        Menu.Rect(tX, tY, tW, tH, C.accent, 255, r)
-    else
-        Menu.Rect(tX, tY, tW, tH, C.track, 255, r)
-    end
-    local k = tH - 4
-    local kx = item.value and (tX + tW - k - 2) or (tX + 2)
-    Menu.Rect(kx, tY + 2, k, k, {255, 255, 255}, 255, k / 2)
-end
-
-function Menu.DrawSliderTrack(x, itemY, w, ih, item, isSel, valueRightPad)
-    local s   = Menu.Scale or 1.0
-    local mn  = item.min   or item.sliderMin   or 0
-    local mx  = item.max   or item.sliderMax   or 100
-    local cv  = item.value or item.sliderValue or mn
-    local pct = clamp((cv - mn) / math.max(0.0001, mx - mn), 0, 1)
-
-    local slW = 96 * s
-    local slH = 5  * s
-    local slX = x + w - slW - (valueRightPad or 50) * s
-    local slY = itemY + ih / 2 - slH / 2
-
-    -- value text on far right
-    local step = item.step or item.sliderStep
-    local valText = (step and step >= 1) and string.format("%.0f", cv) or string.format("%.1f", cv)
-    local valCol  = isSel and C.textOnAccent or C.text
-    Menu.Text(slX + slW + 8 * s, slY - 4 * s, valText, 11, valCol, isSel and 255 or 220)
-
-    Menu.Rect(slX, slY, slW, slH, isSel and {255,255,255} or C.track, isSel and 70 or 255, slH / 2)
-    if pct > 0 then
-        local fill = isSel and {255, 255, 255} or C.accent
-        Menu.Rect(slX, slY, slW * pct, slH, fill, 255, slH / 2)
-        local th = slH + 4 * s
-        Menu.Rect(slX + slW * pct - th / 2, slY - 2 * s, th, th, fill, 255, th / 2)
-    end
-end
-
--- ─── DRAW: rows ───────────────────────────────────────────────────────────────
-function Menu.DrawItem(x, itemY, w, ih, item, isSel)
-    local s = Menu.Scale or 1.0
-
-    if item.isSeparator then
-        Menu.Rect(x, itemY, w, ih, C.panel, 255, 0)
-        if item.separatorText then
-            local tw = Menu.TextW(item.separatorText, 11)
-            Menu.Text(x + w / 2 - tw / 2, itemY + ih / 2 - 6 * s, item.separatorText, 11, C.textDim, 180)
-        end
-        return
-    end
-
-    -- base row (alternating)
-    local base = (item._idx and item._idx % 2 == 0) and C.rowAlt or C.row
-    Menu.Rect(x, itemY, w, ih, base, 255, 0)
-
-    if isSel then
-        if Menu.SelectorY == 0 then Menu.SelectorY = itemY end
-        Menu.SelectorY = Menu.SelectorY + (itemY - Menu.SelectorY) * Menu.SmoothFactor
-        if math.abs(Menu.SelectorY - itemY) < 0.5 then Menu.SelectorY = itemY end
-        local selY = Menu.SelectorY
-        -- clean solid accent highlight + left bar
-        Menu.Rect(x, selY, w, ih, C.accent, 255, 0)
-        Menu.Rect(x, selY, 3 * s, ih, {255, 255, 255}, 230, 0)
-    end
-
-    local txtCol = isSel and C.textOnAccent or C.text
-    local tx = x + 16 * s
-    local ty = itemY + ih / 2 - 7 * s
-    Menu.Text(tx, ty, item.name or "", 14, txtCol, 255)
-
-    if item.type == "toggle" then
-        if item.hasSlider then
-            Menu.DrawSliderTrack(x, itemY, w, ih, item, isSel, 86)
-        end
-        Menu.DrawToggle(x, itemY, w, ih, item, isSel)
-    elseif item.type == "slider" then
-        Menu.DrawSliderTrack(x, itemY, w, ih, item, isSel, 50)
-    elseif item.type == "action" then
-        local hint = ">"
-        local hw   = Menu.TextW(hint, 14)
-        Menu.Text(x + w - hw - 16 * s, ty, hint, 14, txtCol, isSel and 255 or 140)
-    end
-
-    -- right-side badge (only when not a control occupies that space)
-    if item.badge and item.type ~= "toggle" and item.type ~= "slider" then
-        local bw = Menu.TextW(item.badge, 10) + 12 * s
-        local bhh = 15 * s
-        local bx = x + w - bw - 16 * s
-        local by = itemY + ih / 2 - bhh / 2
-        local bgCol = isSel and {255,255,255} or C.accent2
-        Menu.Rect(bx, by, bw, bhh, bgCol, isSel and 60 or 40, 4)
-        local btw = Menu.TextW(item.badge, 10)
-        Menu.Text(bx + (bw - btw) / 2, by + bhh / 2 - 5 * s, item.badge, 10, isSel and C.textOnAccent or C.accent2, 235)
-    end
+    visible = math.max(visible, 1)
+    return visible * pos.itemHeight
 end
 
 function Menu.DrawItems()
-    local pos    = Menu.GetScaledPosition()
-    local s      = Menu.Scale or 1.0
-    local x      = pos.x
-    local startY = pos.y + pos.bannerHeight + pos.sectionHeight
-    local w      = pos.width
-    local ih     = pos.itemHeight
-    local maxVis = Menu.ItemsPerPage
+    local pos = Menu.GetScaledPosition()
+    local scale = Menu.Scale or 1.0
+    local x = pos.x
+    local bannerHeight = Menu.Banner.enabled and (Menu.Banner.height * scale) or pos.headerHeight
+    local startY = pos.y + bannerHeight + pos.sectionHeight + pos.sectionSpacing
+    local width = pos.width - 1
+    local itemHeight = pos.itemHeight
+    local maxVisible = Menu.ItemsPerPage
 
-    local dlist = {}
+    local displayList = {}
     for i, item in ipairs(Menu.Items or {}) do
-        if not item.isHeader then dlist[#dlist + 1] = { index = i, item = item } end
-    end
-    if #dlist == 0 then return end
-
-    -- scroll offset is expressed in display-list slots
-    local curDisplay = 0
-    for slot, e in ipairs(dlist) do
-        if e.index == Menu.CurrentItem then curDisplay = slot break end
-    end
-    if curDisplay > Menu.ItemScrollOffset + maxVis then
-        Menu.ItemScrollOffset = curDisplay - maxVis
-    elseif curDisplay <= Menu.ItemScrollOffset then
-        Menu.ItemScrollOffset = math.max(0, curDisplay - 1)
-    end
-
-    local visCount = 0
-    for slot = 1, math.min(maxVis, #dlist) do
-        local e = dlist[slot + Menu.ItemScrollOffset]
-        if e then
-            visCount = visCount + 1
-            e.item._idx = slot
-            local iy = startY + (slot - 1) * ih
-            Menu.DrawItem(x, iy, w, ih, e.item, e.index == Menu.CurrentItem)
+        if not item.isHeader then
+            table.insert(displayList, { index = i, item = item })
         end
     end
 
-    -- scrollbar
-    if #dlist > maxVis then
-        local totalH = visCount * ih
-        local sbW = 3 * s
-        local sbX = x + w - sbW - 2 * s
-        Menu.Rect(sbX, startY, sbW, totalH, C.line, 200, sbW / 2)
-        local thumbH = totalH * (maxVis / #dlist)
-        local thumbY = startY + (Menu.ItemScrollOffset / #dlist) * totalH
-        Menu.Rect(sbX, thumbY, sbW, thumbH, C.accent, 255, sbW / 2)
+    if #displayList == 0 then return end
+
+    if Menu.CurrentItem > Menu.ItemScrollOffset + maxVisible then
+        Menu.ItemScrollOffset = Menu.CurrentItem - maxVisible
+    elseif Menu.CurrentItem <= Menu.ItemScrollOffset then
+        Menu.ItemScrollOffset = math.max(0, Menu.CurrentItem - 1)
+    end
+
+    local visibleCount = 0
+    for slot = 1, math.min(maxVisible, #displayList) do
+        local entry = displayList[slot + Menu.ItemScrollOffset]
+        if entry then
+            visibleCount = visibleCount + 1
+            local itemY = startY + (slot - 1) * itemHeight
+            local isSelected = entry.index == Menu.CurrentItem
+            Menu.DrawItem(x, itemY, width, itemHeight, entry.item, isSelected)
+        end
     end
 end
 
--- ─── DRAW: footer ─────────────────────────────────────────────────────────────
 function Menu.DrawFooter()
     local pos = Menu.GetScaledPosition()
-    local s   = Menu.Scale or 1.0
-    local x   = pos.x
-    local y   = pos.y + pos.bannerHeight + pos.sectionHeight + Menu.GetContentHeight()
-    local w   = pos.width
-    local h   = pos.footerHeight
+    local scale = Menu.Scale or 1.0
+    local x = pos.x
+    local bannerHeight = Menu.Banner.enabled and (Menu.Banner.height * scale) or pos.headerHeight
+    local totalHeight = bannerHeight + pos.sectionHeight + pos.sectionSpacing + Menu.GetContentHeight()
+    local footerY = pos.y + totalHeight + pos.footerSpacing
+    local footerWidth = pos.width - 1
+    local footerHeight = pos.footerHeight
 
-    Menu.Rect(x, y, w, h, C.panelTop, 255, 0)
-    Menu.Rect(x, y, w, 1, C.line, 255, 0)
+    Menu.DrawRect(x, footerY, footerWidth, footerHeight, 0, 0, 0, 255, pos.footerRadius)
 
-    local size = 11
-    local ty   = y + h / 2 - (size * s) / 2
-    Menu.Text(x + 14 * s, ty, "phantom.lua", size, C.accent, 230)
+    local footerSize = 13
+    local textY = footerY + (footerHeight / 2)
+    local brandText, alpha = Menu.GetBrandAnim()
+    local suffix = (alpha >= 1 and brandText == "phantom") and ".lua" or ""
+    local footerDisplay = brandText .. suffix
+    local alpha255 = math.floor(alpha * 255)
+    Menu.DrawText(x + 15 * scale, textY - ((footerSize * scale) / 2) + 1, footerDisplay, footerSize, 255, 255, 255, alpha255)
 
-    local sel    = Menu.GetSelectableItems()
-    local curPos = Menu.FindSelectablePosition(Menu.CurrentItem or 1)
-    local pt     = string.format("%d / %d", curPos, math.max(#sel, 1))
-    local ptw    = Menu.TextW(pt, size)
-    Menu.Text(x + w - ptw - 14 * s, ty, pt, size, C.textDim, 220)
+    local selectable = Menu.GetSelectableItems()
+    local currentPos = Menu.FindSelectablePosition(Menu.CurrentItem or 1)
+    local posText = string.format("%d / %d", currentPos, math.max(#selectable, 1))
+    local posWidth = Menu.GetTextWidth(posText, footerSize)
+    Menu.DrawText(x + footerWidth - posWidth - (15 * scale), textY, posText, footerSize, 255, 255, 255, 255)
 end
 
--- ─── Notifications ────────────────────────────────────────────────────────────
-local NotifyQueue = {}
-local NOTIFY_DUR  = 3200
+function Menu.DrawBackground()
+    local pos = Menu.GetScaledPosition()
+    local scale = Menu.Scale or 1.0
+    local x, y = pos.x, pos.y
+    local width = pos.width - 1
+    local bannerHeight = Menu.Banner.enabled and (Menu.Banner.height * scale) or pos.headerHeight
+    local totalHeight = bannerHeight + pos.sectionHeight + pos.sectionSpacing + Menu.GetContentHeight() + pos.footerSpacing + pos.footerHeight
 
-local NOTIFY_CFG = {
-    success = { c = {64, 220, 150}, title = "SUCCESS" },
-    info    = { c = {45, 226, 230}, title = "INFO"    },
-    warning = { c = {240, 184, 64}, title = "WARNING" },
-    error   = { c = {245, 70, 70},  title = "ERROR"   },
+    Menu.DrawRect(x, y, width, totalHeight, 0, 0, 0, 250, pos.headerRadius)
+end
+
+local NotificationQueue = {}
+local NOTIFY_DURATION_MS = 3500
+
+local NOTIFY_COLORS = {
+    success = { r = 0.35, g = 0.85, b = 0.45, title = "SUCCESS" },
+    info    = { r = 0.35, g = 0.65, b = 0.95, title = "INFO" },
+    warning = { r = 0.95, g = 0.75, b = 0.2,  title = "WARNING" },
+    error   = { r = 0.95, g = 0.25, b = 0.25, title = "ERROR" }
 }
 
-function Menu.Notify(ntype, message, dur)
+function Menu.Notify(notifyType, message, durationMs)
     if not message or message == "" then return end
-    local cfg = NOTIFY_CFG[ntype or "info"] or NOTIFY_CFG.info
-    NotifyQueue[#NotifyQueue + 1] = {
-        title = cfg.title, message = tostring(message), c = cfg.c,
-        spawn = GetGameTimer(), duration = dur or NOTIFY_DUR,
-    }
+    notifyType = notifyType or "info"
+    local cfg = NOTIFY_COLORS[notifyType] or NOTIFY_COLORS.info
+    durationMs = durationMs or NOTIFY_DURATION_MS
+    table.insert(NotificationQueue, 1, {
+        type = notifyType,
+        title = cfg.title,
+        message = tostring(message),
+        spawnTime = GetGameTimer(),
+        duration = durationMs,
+        r = cfg.r, g = cfg.g, b = cfg.b
+    })
 end
 
 function Menu.DrawNotifications()
-    if not (Susano and Susano.DrawRectFilled and Susano.DrawText) then return end
-    local sw  = (Susano.GetScreenWidth  and Susano.GetScreenWidth())  or 1920
-    local sh  = (Susano.GetScreenHeight and Susano.GetScreenHeight()) or 1080
-    local now = GetGameTimer()
-    local boxW, boxH = 300, 60
+    if not Susano or not Susano.DrawRectFilled or not Susano.DrawText then return end
+    local sw = (Susano.GetScreenWidth and Susano.GetScreenWidth()) or 1920
+    local sh = (Susano.GetScreenHeight and Susano.GetScreenHeight()) or 1080
+    local nowMs = GetGameTimer()
 
-    for i = #NotifyQueue, 1, -1 do
-        if now - NotifyQueue[i].spawn > NotifyQueue[i].duration + 350 then
-            table.remove(NotifyQueue, i)
+    for i = #NotificationQueue, 1, -1 do
+        if nowMs - NotificationQueue[i].spawnTime > NotificationQueue[i].duration + 300 then
+            table.remove(NotificationQueue, i)
         end
     end
 
-    local baseY = sh - 28 - boxH
-    local finX  = sw - 28 - boxW
-    for idx, n in ipairs(NotifyQueue) do
+    local boxW, boxH = 320, 72
+    local baseY = sh - 20 - boxH
+    local finalX = sw - 20 - boxW
+
+    for idx, n in ipairs(NotificationQueue) do
         local boxY = baseY - (idx - 1) * (boxH + 10)
         if boxY < 40 then break end
-        local e = now - n.spawn
+        local elapsed = nowMs - n.spawnTime
         local alpha = 1.0
-        if e < 220 then alpha = e / 220 end
-        if e > n.duration then alpha = 1.0 - (e - n.duration) / 350 end
-        alpha = clamp(alpha, 0, 1)
-        local slide = (1 - alpha) * 40
-        local bx = finX + slide
+        if elapsed < 300 then alpha = elapsed / 300 end
+        if elapsed > n.duration then alpha = 1.0 - ((elapsed - n.duration) / 300) end
+        alpha = math.max(0, math.min(1, alpha))
 
-        Menu.Rect(bx, boxY, boxW, boxH, C.panel, 244 * alpha, 8)
-        Menu.Rect(bx, boxY, 4, boxH, n.c, 255 * alpha, 0)
-        Menu.Text(bx + 16, boxY + 11, n.title, 13, n.c, 255 * alpha)
-        Menu.Text(bx + 16, boxY + 32, n.message, 12, C.text, 235 * alpha)
+        Susano.DrawRectFilled(finalX, boxY, boxW, boxH, 0.086, 0.086, 0.102, 0.96 * alpha, 0)
+        Susano.DrawRectFilled(finalX, boxY, 5, boxH, n.r, n.g, n.b, 1.0 * alpha, 0)
+        Susano.DrawText(finalX + 16, boxY + 12, n.title, 16, n.r, n.g, n.b, 1.0 * alpha)
+        Susano.DrawText(finalX + 16, boxY + 36, n.message, 14, 1, 1, 1, 1.0 * alpha)
     end
 end
 
--- ─── FEATURES ────────────────────────────────────────────────────────────────
-local F = { animCancel = false }
-
--- 1) Anim Cancel (toggle): X tusuna (control 73) basinca animasyonu iptal eder
-function F.SetAnimCancel(v)
-    F.animCancel = v
-    Menu.Notify(v and "success" or "info", "Anim Cancel: " .. (v and "ON" or "OFF"))
-end
-
-CreateThread(function()
-    while true do
-        Wait(0)
-        if F.animCancel and IsControlJustPressed(0, 73) then
-            ClearPedTasksImmediately(PlayerPedId())
-        end
-    end
-end)
-
--- 2) Revive (action)
-function F.Revive()
-    CreateThread(function()
-        Wait(1000)
-        TriggerEvent('hospital:client:Revive')
-        SetEntityHealth(PlayerPedId(), 200)
-        SetPedArmour(PlayerPedId(), 100)
-        CreateThread(function()
-            Wait(2000)
-            for i = 1, 5 do
-                SetNotificationTextEntry("STRING")
-                DrawNotification(false, true)
-                Wait(1000)
-            end
-        end)
-    end)
-    Menu.Notify("success", "Revive tetiklendi")
-end
-
--- ─── MENU ITEMS ──────────────────────────────────────────────────────────────
-Menu.Items = {
-    { isHeader = true, name = "MAIN" },
-    { name = "Anim Cancel", type = "toggle", value = false, onClick = function(v) F.SetAnimCancel(v) end },
-    { name = "Revive", type = "action", badge = "HEAL", onClick = function() F.Revive() end },
-}
-
--- ─── RENDER ───────────────────────────────────────────────────────────────────
 function Menu.Render()
     if not (Susano and Susano.BeginFrame) then return end
-    Menu.UpdateSectionName()
-    Menu.UpdateAnims()
 
+    Menu.UpdateLoading()
+    Menu.UpdateSectionName()
+    Menu.UpdateBrandAnim()
     Susano.BeginFrame()
 
+    if Menu.IsLoading then
+        Menu.DrawLoadingScreen()
+    end
+
+    if Menu.SelectingKey then
+        Menu.DrawKeySelector()
+    end
+
+    if Menu.SelectingFeatureBind then
+        Menu.DrawFeatureKeySelector()
+    end
+
     if Menu.Visible then
-        -- each section guarded independently so one failure can't blank the rest
-        pcall(Menu.DrawPanel)
-        pcall(Menu.DrawHeader)
-        pcall(Menu.DrawSectionBar)
-        pcall(Menu.DrawItems)
-        pcall(Menu.DrawFooter)
+        Menu.DrawBackground()
+        Menu.DrawHeader()
+        Menu.DrawSectionBar()
+        Menu.DrawItems()
+        Menu.DrawFooter()
     end
 
-    pcall(Menu.DrawNotifications)
+    Menu.DrawNotifications()
 
-    if Menu.OnRender then pcall(Menu.OnRender) end
-    if Susano.SubmitFrame then Susano.SubmitFrame() end
+    if Menu.OnRender then
+        pcall(Menu.OnRender)
+    end
 
-    if not Menu.Visible and not Menu.PreventResetFrame and Susano.ResetFrame then
-        Susano.ResetFrame()
+    if Susano.SubmitFrame then
+        Susano.SubmitFrame()
+    end
+
+    local keepOverlay = Menu.Visible or Menu.IsLoading or Menu.SelectingKey or Menu.SelectingFeatureBind or Menu.PreventResetFrame
+    if not keepOverlay then
+        if Susano.ResetFrame then
+            Susano.ResetFrame()
+        end
     end
 end
 
--- ─── INPUT ────────────────────────────────────────────────────────────────────
-Menu.KeyStates   = {}
-Menu.RepeatState = {}
-local REPEAT_DELAY    = 350
-local REPEAT_INTERVAL = 90
+Menu.KeyStates = {}
 
-function Menu.IsKeyJustPressed(key)
+function Menu.IsKeyJustPressed(keyCode)
     if not (Susano and Susano.GetAsyncKeyState) then return false end
-    local isDown = (Susano.GetAsyncKeyState(key)) == true
-    local was = Menu.KeyStates[key] or false
-    Menu.KeyStates[key] = isDown
-    return isDown and not was
+    local down, pressed = Susano.GetAsyncKeyState(keyCode)
+    local wasDown = Menu.KeyStates[keyCode] or false
+    Menu.KeyStates[keyCode] = down == true
+    if pressed == true then return true end
+    if down == true and not wasDown then return true end
+    return false
 end
 
-function Menu.IsKeyPressedOrRepeat(key)
-    if not (Susano and Susano.GetAsyncKeyState) then return false end
-    local isDown = (Susano.GetAsyncKeyState(key)) == true
-    local st = Menu.RepeatState[key]
-    if not st then st = { down = false, nextFire = 0 }; Menu.RepeatState[key] = st end
-    local now = GetGameTimer()
-    if isDown and not st.down then
-        st.down = true
-        st.nextFire = now + REPEAT_DELAY
-        return true
-    elseif isDown and st.down then
-        if now >= st.nextFire then st.nextFire = now + REPEAT_INTERVAL return true end
-        return false
-    else
-        st.down = false
-        return false
-    end
-end
-
-function Menu.HandleSliderChange(item, dir)
+function Menu.HandleSliderChange(item, direction)
     if item.type == "slider" then
         local step = item.step or 1
-        item.value = clamp((item.value or item.min or 0) + step * dir, item.min or 0, item.max or 100)
+        item.value = math.max(item.min or 0, math.min(item.max or 100, (item.value or item.min or 0) + (step * direction)))
         if item.onClick then item.onClick(item.value) end
     elseif item.type == "toggle" and item.hasSlider then
         local step = item.sliderStep or 0.1
-        item.sliderValue = clamp((item.sliderValue or item.sliderMin or 0) + step * dir, item.sliderMin or 0, item.sliderMax or 100)
+        item.sliderValue = math.max(item.sliderMin or 0, math.min(item.sliderMax or 100, (item.sliderValue or item.sliderMin or 0) + (step * direction)))
         if item.onSliderChange then item.onSliderChange(item.sliderValue) end
     end
 end
 
 function Menu.ActivateCurrentItem()
     local item = Menu.Items[Menu.CurrentItem]
-    if not Menu.IsSelectableItem(item) then return end
+    if not item or not Menu.IsSelectableItem(item) then return end
+
     if item.type == "toggle" then
         item.value = not item.value
+        if Menu.Notify then
+            Menu.Notify(item.value and "success" or "info", item.name .. ": " .. (item.value and "Enabled" or "Disabled"))
+        end
         if item.onClick then item.onClick(item.value) end
     elseif item.type == "action" then
         if item.onClick then item.onClick() end
@@ -707,40 +989,57 @@ function Menu.ActivateCurrentItem()
 end
 
 function Menu.HandleInput()
+    if Menu.IsLoading then return end
+
+    if Menu.SelectingKey then
+        Menu.HandleKeySelection()
+        return
+    end
+
+    if Menu.SelectingFeatureBind then
+        Menu.HandleFeatureKeySelection()
+        return
+    end
+
+    Menu.HandleFeatureKeybinds()
+
     if not Menu.LoadingComplete then return end
 
-    if Menu.IsKeyJustPressed(Menu.SelectedKey or 0x2D) then
+    local toggleKeyCode = Menu.SelectedKey
+    if toggleKeyCode and Menu.IsKeyJustPressed(toggleKeyCode) then
         Menu.Visible = not Menu.Visible
-        if Menu.Visible then
-            if not Menu.IsSelectableItem(Menu.Items[Menu.CurrentItem]) then
-                Menu.CurrentItem = Menu.FirstSelectableIndex()
-            end
-            Menu.UpdateSectionName()
-        elseif Susano and Susano.ResetFrame and not Menu.PreventResetFrame then
+        if not Menu.Visible and Susano and Susano.ResetFrame and not Menu.PreventResetFrame then
             Susano.ResetFrame()
         end
     end
 
     if not Menu.Visible then return end
 
-    if Menu.IsKeyPressedOrRepeat(0x26) then          -- Up
+    if Menu.IsKeyJustPressed(0x26) then
         Menu.CurrentItem = Menu.FindNextSelectable(Menu.CurrentItem, -1)
         Menu.UpdateSectionName()
-    elseif Menu.IsKeyPressedOrRepeat(0x28) then      -- Down
+    elseif Menu.IsKeyJustPressed(0x28) then
         Menu.CurrentItem = Menu.FindNextSelectable(Menu.CurrentItem, 1)
         Menu.UpdateSectionName()
-    elseif Menu.IsKeyPressedOrRepeat(0x25) then      -- Left
+    elseif Menu.IsKeyJustPressed(0x25) then
         local item = Menu.Items[Menu.CurrentItem]
         if item then Menu.HandleSliderChange(item, -1) end
-    elseif Menu.IsKeyPressedOrRepeat(0x27) then      -- Right
+    elseif Menu.IsKeyJustPressed(0x27) then
         local item = Menu.Items[Menu.CurrentItem]
         if item then Menu.HandleSliderChange(item, 1) end
-    elseif Menu.IsKeyJustPressed(0x0D) then          -- Enter
+    elseif Menu.IsKeyJustPressed(0x78) then
+        local item = Menu.Items[Menu.CurrentItem]
+        if item and Menu.IsSelectableItem(item) and (item.type == "toggle" or item.type == "action") then
+            Menu.SelectingFeatureBind = true
+            Menu.BindingFeatureItem = item
+            Menu.BindingFeatureKey = item.bindKey
+            Menu.BindingFeatureKeyName = item.bindKeyName or "..."
+        end
+    elseif Menu.IsKeyJustPressed(0x0D) then
         Menu.ActivateCurrentItem()
     end
 end
 
--- ─── MAIN THREAD ─────────────────────────────────────────────────────────────
 CreateThread(function()
     while true do
         Menu.Render()
@@ -749,8 +1048,19 @@ CreateThread(function()
     end
 end)
 
-if Menu.Banner.enabled and Menu.Banner.imageUrl ~= "" then
+if Menu.Banner.enabled and Menu.Banner.imageUrl and Menu.Banner.imageUrl ~= "" and Menu.Banner.imageUrl ~= "BANNER_URL_HERE" then
     Menu.LoadBannerTexture(Menu.Banner.imageUrl)
 end
+
+CreateThread(function()
+    while true do
+        Wait(5000)
+        if Menu.Banner.enabled and Menu.Banner.imageUrl and Menu.Banner.imageUrl ~= "" and Menu.Banner.imageUrl ~= "BANNER_URL_HERE" then
+            if (not Menu.bannerTexture or Menu.bannerTexture == 0) and not Menu.bannerLoading then
+                Menu.LoadBannerTexture(Menu.Banner.imageUrl)
+            end
+        end
+    end
+end)
 
 return Menu
