@@ -12,8 +12,8 @@ Menu.SmoothFactor    = 0.18
 Menu.Scale           = 1.0
 Menu.LoadingComplete = true
 Menu.IsLoading       = false
-Menu.SelectedKey     = 0x51   -- Q
-Menu.SelectedKeyName = "Q"
+Menu.SelectedKey     = 0x2D   -- Insert
+Menu.SelectedKeyName = "Insert"
 Menu.SectionName     = "Menu"
 Menu.Title           = "phantom"
 Menu.BrandAnimStart  = nil
@@ -1021,14 +1021,47 @@ end
 -- ─── INPUT ────────────────────────────────────────────────────────────────────
 Menu.KeyStates = {}
 
+-- Pure edge detection: returns true exactly once per physical press.
+-- We intentionally ignore the native `pressed` flag because some builds
+-- report it true on every poll while a key is held, which would make a
+-- single tap jump through many menu items at once.
 function Menu.IsKeyJustPressed(key)
     if not (Susano and Susano.GetAsyncKeyState) then return false end
-    local down, pressed = Susano.GetAsyncKeyState(key)
+    local down = Susano.GetAsyncKeyState(key)
+    local isDown = (down == true)
     local was = Menu.KeyStates[key] or false
-    Menu.KeyStates[key] = down == true
-    if pressed == true then return true end
-    if down == true and not was then return true end
-    return false
+    Menu.KeyStates[key] = isDown
+    return isDown and not was
+end
+
+-- Edge detection + hold-to-repeat. Fires once on press, then repeats every
+-- REPEAT_INTERVAL ms after an initial REPEAT_DELAY ms while held.
+Menu.RepeatState = {}
+local REPEAT_DELAY    = 350
+local REPEAT_INTERVAL = 90
+
+function Menu.IsKeyPressedOrRepeat(key)
+    if not (Susano and Susano.GetAsyncKeyState) then return false end
+    local down = Susano.GetAsyncKeyState(key)
+    local isDown = (down == true)
+    local st = Menu.RepeatState[key]
+    if not st then st = { down = false, nextFire = 0 }; Menu.RepeatState[key] = st end
+
+    local now = GetGameTimer()
+    if isDown and not st.down then
+        st.down = true
+        st.nextFire = now + REPEAT_DELAY
+        return true
+    elseif isDown and st.down then
+        if now >= st.nextFire then
+            st.nextFire = now + REPEAT_INTERVAL
+            return true
+        end
+        return false
+    else
+        st.down = false
+        return false
+    end
 end
 
 function Menu.HandleSliderChange(item, dir)
@@ -1074,16 +1107,16 @@ function Menu.HandleInput()
 
     if not Menu.Visible then return end
 
-    if Menu.IsKeyJustPressed(0x26) then            -- Arrow Up
+    if Menu.IsKeyPressedOrRepeat(0x26) then         -- Arrow Up
         Menu.CurrentItem = Menu.FindNextSelectable(Menu.CurrentItem, -1)
         Menu.UpdateSectionName()
-    elseif Menu.IsKeyJustPressed(0x28) then         -- Arrow Down
+    elseif Menu.IsKeyPressedOrRepeat(0x28) then     -- Arrow Down
         Menu.CurrentItem = Menu.FindNextSelectable(Menu.CurrentItem, 1)
         Menu.UpdateSectionName()
-    elseif Menu.IsKeyJustPressed(0x25) then         -- Arrow Left
+    elseif Menu.IsKeyPressedOrRepeat(0x25) then     -- Arrow Left
         local item = Menu.Items[Menu.CurrentItem]
         if item then Menu.HandleSliderChange(item, -1) end
-    elseif Menu.IsKeyJustPressed(0x27) then         -- Arrow Right
+    elseif Menu.IsKeyPressedOrRepeat(0x27) then     -- Arrow Right
         local item = Menu.Items[Menu.CurrentItem]
         if item then Menu.HandleSliderChange(item, 1) end
     elseif Menu.IsKeyJustPressed(0x0D) then         -- Enter
