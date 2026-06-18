@@ -335,10 +335,10 @@ function Menu.GetBrandAnim()
     elseif elapsed < 1050 then
         return "o", 1 - ((elapsed - 750) / 300)
     elseif elapsed < 1550 then
-        return "phantom", (elapsed - 1050) / 500
+        return "Emre", (elapsed - 1050) / 500
     end
 
-    return "phantom", 1
+    return "Emre", 1
 end
 
 function Menu.DrawShadowText(x, y, text, size_px, r, g, b, a)
@@ -367,7 +367,7 @@ function Menu.DrawLoadingScreen()
     local centerX = sw / 2
     local centerY = sh / 2
 
-    local title = "phantom"
+    local title = "Emre"
     local titleSize = 42
     local titleWidth = Menu.GetTextWidth(title, titleSize)
     Menu.DrawShadowText(centerX - (titleWidth / 2), centerY - 80, title, titleSize, 255, 255, 255, 255)
@@ -421,7 +421,7 @@ function Menu.DrawKeySelector()
     Menu.DrawRect(panelX, panelY, panelW, panelH, 0, 0, 0, 230, 8)
     Menu.DrawRect(panelX, panelY, panelW, 2, 255, 255, 255, 255, 0)
 
-    local title = "phantom"
+    local title = "Emre"
     local titleSize = 22
     local titleW = Menu.GetTextWidth(title, titleSize)
     Menu.DrawShadowText(panelX + (panelW / 2) - (titleW / 2), panelY + 14, title, titleSize, 255, 255, 255, 255)
@@ -823,7 +823,7 @@ function Menu.DrawFooter()
     local footerSize = 13
     local textY = footerY + (footerHeight / 2)
     local brandText, alpha = Menu.GetBrandAnim()
-    local suffix = (alpha >= 1 and brandText == "phantom") and ".lua" or ""
+    local suffix = (alpha >= 1 and brandText == "Emre") and ".lua" or ""
     local footerDisplay = brandText .. suffix
     local alpha255 = math.floor(alpha * 255)
     Menu.DrawText(x + 15 * scale, textY - ((footerSize * scale) / 2) + 1, footerDisplay, footerSize, 255, 255, 255, alpha255)
