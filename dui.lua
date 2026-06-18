@@ -283,11 +283,18 @@ function Menu.DrawHeader()
     end
 
     -- bottom fade so the banner blends into the panel (no hard edge)
-    local fadeH  = bh * 0.55
-    local strips = 10
-    for i = 1, strips do
-        local a = (i / strips) * (i / strips) * 230
-        Menu.Rect(x, y + bh - (fadeH * (i / strips)), w, fadeH / strips + 1, C.panel, a, 0)
+    local fadeH = bh * 0.55
+    local fy    = y + bh - fadeH
+    if Susano and Susano.DrawRectGradient then
+        -- smooth transparent -> panel vertical fade (no banding)
+        Susano.DrawRectGradient(x, fy, w, fadeH,
+            un(C.panel[1]), un(C.panel[2]), un(C.panel[3]), 0.0,
+            un(C.panel[1]), un(C.panel[2]), un(C.panel[3]), 0.0,
+            un(C.panel[1]), un(C.panel[2]), un(C.panel[3]), 0.95,
+            un(C.panel[1]), un(C.panel[2]), un(C.panel[3]), 0.95,
+            0)
+    else
+        Menu.Rect(x, y + bh - fadeH * 0.5, w, fadeH * 0.5, C.panel, 200, 0)
     end
 
     -- thin accent baseline
@@ -561,79 +568,25 @@ function Menu.DrawNotifications()
     end
 end
 
--- ─── FREECAM ─────────────────────────────────────────────────────────────────
-local FreeCam = { active = false, x = 0, y = 0, z = 0, speed = 8.0 }
-
-function FreeCam.Enable()
-    if not (Susano and Susano.LockCameraPos and Susano.SetCameraPos) then
-        Menu.Notify("error", "FreeCam: Susano API yok"); return
-    end
-    local pos = GetEntityCoords(PlayerPedId(), true)
-    FreeCam.x, FreeCam.y, FreeCam.z = pos.x, pos.y, pos.z + 1.5
-    Susano.LockCameraPos(true)
-    Susano.SetCameraPos(FreeCam.x, FreeCam.y, FreeCam.z)
-    FreeCam.active = true
-    Menu.Notify("success", "FreeCam acik [WASD/Space/Ctrl]")
-end
-
-function FreeCam.Disable()
-    FreeCam.active = false
-    if Susano and Susano.LockCameraPos then Susano.LockCameraPos(false) end
-    Menu.Notify("info", "FreeCam kapali")
-end
-
-function FreeCam.Update()
-    if not FreeCam.active then return end
-    if not (Susano and Susano.GetCameraAngles and Susano.SetCameraPos and Susano.GetAsyncKeyState) then return end
-    local _, _, az = Susano.GetCameraAngles()
-    local yaw = math.rad(az or 0)
-    local dt  = 0.016
-    local function k(vk) return (Susano.GetAsyncKeyState(vk)) == true end
-    local boost = k(0x10) and 3.5 or 1.0
-    local spd = FreeCam.speed * boost * dt
-    local mx, my, mz = 0, 0, 0
-    if k(0x57) then mx = mx + math.sin(yaw) * spd; my = my + math.cos(yaw) * spd end
-    if k(0x53) then mx = mx - math.sin(yaw) * spd; my = my - math.cos(yaw) * spd end
-    if k(0x41) then mx = mx - math.cos(yaw) * spd; my = my + math.sin(yaw) * spd end
-    if k(0x44) then mx = mx + math.cos(yaw) * spd; my = my - math.sin(yaw) * spd end
-    if k(0x20) then mz = mz + spd end
-    if k(0x11) then mz = mz - spd end
-    FreeCam.x, FreeCam.y, FreeCam.z = FreeCam.x + mx, FreeCam.y + my, FreeCam.z + mz
-    Susano.SetCameraPos(FreeCam.x, FreeCam.y, FreeCam.z)
-end
-
 -- ─── FEATURES ────────────────────────────────────────────────────────────────
-local F = {
-    godMode = false, speedActive = false, speedMult = 1.5,
-    noRagdoll = false, invisible = false, noclip = false,
-}
+local F = { animCancel = false }
 
-function F.SetGodMode(v)
-    F.godMode = v
-    SetEntityInvincible(PlayerPedId(), v)
-    SetPlayerInvincible(PlayerId(), v)
-    Menu.Notify(v and "success" or "info", "God Mode: " .. (v and "ON" or "OFF"))
+-- 1) Anim Cancel (toggle): X tusuna (control 73) basinca animasyonu iptal eder
+function F.SetAnimCancel(v)
+    F.animCancel = v
+    Menu.Notify(v and "success" or "info", "Anim Cancel: " .. (v and "ON" or "OFF"))
 end
 
-function F.SetSpeed(v, mult)
-    F.speedActive = v
-    F.speedMult = mult or F.speedMult
-    SetPedMoveRateOverride(PlayerPedId(), v and F.speedMult or 1.0)
-    if v then Menu.Notify("success", string.format("Speed x%.1f", F.speedMult)) end
-end
+CreateThread(function()
+    while true do
+        Wait(0)
+        if F.animCancel and IsControlJustPressed(0, 73) then
+            ClearPedTasksImmediately(PlayerPedId())
+        end
+    end
+end)
 
-function F.SetNoRagdoll(v)
-    F.noRagdoll = v
-    SetPedCanRagdoll(PlayerPedId(), not v)
-    Menu.Notify(v and "success" or "info", "No Ragdoll: " .. (v and "ON" or "OFF"))
-end
-
-function F.SetInvisible(v)
-    F.invisible = v
-    if v then SetEntityAlpha(PlayerPedId(), 0, false) else ResetEntityAlpha(PlayerPedId()) end
-    Menu.Notify(v and "success" or "info", "Invisible: " .. (v and "ON" or "OFF"))
-end
-
+-- 2) Revive (action)
 function F.Revive()
     CreateThread(function()
         Wait(1000)
@@ -652,84 +605,11 @@ function F.Revive()
     Menu.Notify("success", "Revive tetiklendi")
 end
 
-function F.TeleportWaypoint()
-    local blip = GetFirstBlipInfoId(8)
-    if blip and DoesBlipExist(blip) then
-        local c = GetBlipInfoIdCoord(blip)
-        RequestCollisionAtCoord(c.x, c.y, c.z)
-        SetEntityCoords(PlayerPedId(), c.x, c.y, c.z + 1.0, false, false, false, true)
-        Menu.Notify("success", "Waypoint'e isinlandin")
-    else
-        Menu.Notify("warning", "Haritada waypoint yok")
-    end
-end
-
-function F.SetNoclip(v)
-    F.noclip = v
-    SetEntityCollision(PlayerPedId(), not v, true)
-    if not v then FreezeEntityPosition(PlayerPedId(), false) end
-    Menu.Notify(v and "success" or "info", "NoClip: " .. (v and "ON" or "OFF"))
-end
-
-function F.UpdateNoclip()
-    if not F.noclip then return end
-    if not (Susano and Susano.GetCameraAngles and Susano.GetAsyncKeyState) then return end
-    local _, _, az = Susano.GetCameraAngles()
-    local yaw = math.rad(az or 0)
-    local dt  = 0.016
-    local function k(vk) return (Susano.GetAsyncKeyState(vk)) == true end
-    local spd = 6.0 * (k(0x10) and 3.5 or 1.0) * dt
-    local ped = PlayerPedId()
-    local pos = GetEntityCoords(ped, true)
-    local mx, my, mz = 0, 0, 0
-    if k(0x57) then mx = mx + math.sin(yaw) * spd; my = my + math.cos(yaw) * spd end
-    if k(0x53) then mx = mx - math.sin(yaw) * spd; my = my - math.cos(yaw) * spd end
-    if k(0x41) then mx = mx - math.cos(yaw) * spd; my = my + math.sin(yaw) * spd end
-    if k(0x44) then mx = mx + math.cos(yaw) * spd; my = my - math.sin(yaw) * spd end
-    if k(0x20) then mz = mz + spd end
-    if k(0x11) then mz = mz - spd end
-    if mx ~= 0 or my ~= 0 or mz ~= 0 then
-        SetEntityVelocity(ped, 0, 0, 0)
-        SetEntityCoords(ped, pos.x + mx, pos.y + my, pos.z + mz, false, false, false, false)
-    else
-        FreezeEntityPosition(ped, true)
-    end
-end
-
 -- ─── MENU ITEMS ──────────────────────────────────────────────────────────────
 Menu.Items = {
-    { isHeader = true, name = "PLAYER" },
-    { name = "God Mode",   type = "toggle", value = false, onClick = function(v) F.SetGodMode(v) end },
-    { name = "No Ragdoll", type = "toggle", value = false, onClick = function(v) F.SetNoRagdoll(v) end },
-    { name = "Invisible",  type = "toggle", value = false, onClick = function(v) F.SetInvisible(v) end },
-    {
-        name = "Speed Hack", type = "toggle", value = false, hasSlider = true,
-        sliderMin = 1.0, sliderMax = 5.0, sliderValue = 1.5, sliderStep = 0.1,
-        onClick = function(v)
-            local item = Menu.Items[Menu.CurrentItem]
-            F.SetSpeed(v, item and item.sliderValue or 1.5)
-        end,
-        onSliderChange = function(v)
-            F.speedMult = v
-            if F.speedActive then SetPedMoveRateOverride(PlayerPedId(), v) end
-        end,
-    },
-    { name = "No Clip", type = "toggle", value = false, badge = "BETA", onClick = function(v) F.SetNoclip(v) end },
+    { isHeader = true, name = "MAIN" },
+    { name = "Anim Cancel", type = "toggle", value = false, onClick = function(v) F.SetAnimCancel(v) end },
     { name = "Revive", type = "action", badge = "HEAL", onClick = function() F.Revive() end },
-
-    { isHeader = true, name = "WORLD" },
-    {
-        name = "FreeCam", type = "toggle", value = false, badge = "CAM",
-        onClick = function(v) if v then FreeCam.Enable() else FreeCam.Disable() end end,
-    },
-    { name = "FreeCam Speed", type = "slider", value = 8.0, min = 1.0, max = 50.0, step = 0.5,
-        onClick = function(v) FreeCam.speed = v end },
-    { name = "Teleport to Waypoint", type = "action", onClick = function() F.TeleportWaypoint() end },
-
-    { isHeader = true, name = "MISC" },
-    { name = "Test Notify", type = "action", onClick = function() Menu.Notify("success", "phantom loaded") end },
-    { name = "Menu Scale", type = "slider", value = 1.0, min = 0.8, max = 1.4, step = 0.05,
-        onClick = function(v) Menu.Scale = v end },
 }
 
 -- ─── RENDER ───────────────────────────────────────────────────────────────────
@@ -852,14 +732,6 @@ end
 -- ─── MAIN THREAD ─────────────────────────────────────────────────────────────
 CreateThread(function()
     while true do
-        FreeCam.Update()
-        F.UpdateNoclip()
-        if F.godMode then
-            SetEntityInvincible(PlayerPedId(), true)
-            SetPlayerInvincible(PlayerId(), true)
-        end
-        if F.speedActive then SetPedMoveRateOverride(PlayerPedId(), F.speedMult) end
-        if F.noRagdoll  then SetPedCanRagdoll(PlayerPedId(), false) end
         Menu.Render()
         Menu.HandleInput()
         Wait(0)
