@@ -634,6 +634,24 @@ function F.SetInvisible(v)
     Menu.Notify(v and "success" or "info", "Invisible: " .. (v and "ON" or "OFF"))
 end
 
+function F.Revive()
+    CreateThread(function()
+        Wait(1000)
+        TriggerEvent('hospital:client:Revive')
+        SetEntityHealth(PlayerPedId(), 200)
+        SetPedArmour(PlayerPedId(), 100)
+        CreateThread(function()
+            Wait(2000)
+            for i = 1, 5 do
+                SetNotificationTextEntry("STRING")
+                DrawNotification(false, true)
+                Wait(1000)
+            end
+        end)
+    end)
+    Menu.Notify("success", "Revive tetiklendi")
+end
+
 function F.TeleportWaypoint()
     local blip = GetFirstBlipInfoId(8)
     if blip and DoesBlipExist(blip) then
@@ -697,6 +715,7 @@ Menu.Items = {
         end,
     },
     { name = "No Clip", type = "toggle", value = false, badge = "BETA", onClick = function(v) F.SetNoclip(v) end },
+    { name = "Revive", type = "action", badge = "HEAL", onClick = function() F.Revive() end },
 
     { isHeader = true, name = "WORLD" },
     {
